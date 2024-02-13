@@ -19,7 +19,7 @@ enum Schema[A] {
 
   def narrow[B >: A]: Schema[B] = this.asInstanceOf[Schema[B]]
 }
-object Schema extends SchemaInstances0 {
+object Schema extends SchemaInstancesBuildIn {
   inline def apply[A](using A: Schema[A]): Schema[A] = A
 
   def singleton[A: TypeName](value: A): Schema[A] =
@@ -35,6 +35,9 @@ object Schema extends SchemaInstances0 {
   def sumType[A: TypeName](elements: Subtype.Of[A]*)(toOrdinal: Any => Int): Schema[A] =
     sumType(IArray.from(elements))(toOrdinal)
 
+  def isomorphism[A: TypeName, B: Schema](to: A => B)(from: B => A): Schema[A] =
+    Invariant[A, B](TypeName[A], to, from, MappingType.NewType(Schema[B]))
+
   def seqLike[A: Schema, CC <: IterableOnce[A]: TypeName](using fac: Factory[A, CC]): Schema[CC] =
     Invariant[CC, IterableOnce[A]](TypeName[CC], cc => cc, fac.fromSpecific, MappingType.SeqLike(Schema[A]))
 
@@ -46,16 +49,13 @@ object Schema extends SchemaInstances0 {
       MappingType.MapLike(Schema[K], Schema[V])
     )
 
-  def stringLike[A: TypeName](to: A => String)(from: String => A): Schema[A] =
-    Invariant[A, String](TypeName[A], to, from, MappingType.NewType(Schema[String]))
-
   def erased[A: TypeName](cause: String): Schema[A] =
     Invariant[A, Nothing](TypeName[A], _ => ???, _ => ???, MappingType.Erased(cause))
   def secured[A: TypeName]: Schema[A] =
     erased[A]("secured")
 }
 
-private[schema] trait SchemaInstances0 extends SchemaInstances1 { this: Schema.type =>
+private[schema] trait SchemaInstancesBuildIn extends SchemaInstancesReflective { this: Schema.type =>
 
   // primitives
   given Schema[Nothing] = Primitive(TypeName.derived[Nothing], Primitives.Nothing)
@@ -71,7 +71,7 @@ private[schema] trait SchemaInstances0 extends SchemaInstances1 { this: Schema.t
   given Schema[Char]    = Primitive(TypeName.derived[Char], Primitives.Char)
   given Schema[String]  = Primitive(TypeName.derived[String], Primitives.String)
 
-  // collections
+  // arrays and collections
   given [A: scala.reflect.ClassTag: Schema]: Schema[Array[A]] =
     Invariant[Array[A], IterableOnce[A]](
       TypeName(s"scala.Array[${Schema[A].name.fullName}]"),
@@ -92,10 +92,20 @@ private[schema] trait SchemaInstances0 extends SchemaInstances1 { this: Schema.t
     mapLike[K, V, CC]
 
   // parsable from String
-  given Schema[BigDecimal] = stringLike[BigDecimal](_.toString())(BigDecimal(_))
-  given Schema[BigInt]     = stringLike[BigInt](_.toString())(BigInt(_))
-  // TODO: java.time.{Duration, Instant}
-  // TODO: java.util.UUID
+  given Schema[BigDecimal]     = isomorphism[BigDecimal, String](_.toString())(BigDecimal(_))
+  given Schema[BigInt]         = isomorphism[BigInt, String](_.toString())(BigInt(_))
+  given Schema[java.util.UUID] = isomorphism[java.util.UUID, String](_.toString())(java.util.UUID.fromString)
+
+  // parsable from Long
+  private val nanosInSecond = 1_000_000_000L
+  given Schema[java.time.Duration] =
+    isomorphism[java.time.Duration, Long](d => d.getSeconds() * nanosInSecond + d.getNano())(l =>
+      java.time.Duration.ofNanos(l)
+    )
+  given Schema[java.time.Instant] =
+    isomorphism[java.time.Instant, Long](i => i.getEpochSecond() * nanosInSecond + i.getNano())(l =>
+      java.time.Instant.ofEpochSecond(l / nanosInSecond, l % nanosInSecond)
+    )
 
   // exceptions
   given Schema[StackTraceElement] = product(
@@ -128,8 +138,19 @@ private[schema] trait SchemaInstances0 extends SchemaInstances1 { this: Schema.t
       .tap(_.setStackTrace(args(2).asInstanceOf[Array[StackTraceElement]]))
   )
 
-  // erased types
-  given [A, B](using TypeName[A => B]): Schema[A => B] = erased[A => B]("function")
+  // functions
+  given [A: TypeName]: Schema[() => A] =
+    given TypeName[() => A] = typeName"() => ${TypeName[A]}".of[() => A]
+    erased[() => A]("function")
+  given [A: TypeName, B: TypeName]: Schema[A => B] =
+    given TypeName[A => B] = typeName"${TypeName[A]} => ${TypeName[B]}".of[A => B]
+    erased[A => B]("function")
+  // TODO: more functions
+}
+
+private[schema] trait SchemaInstancesReflective extends SchemaInstancesDerived { this: Schema.type =>
+
+  private def unknownType[A: TypeName] = erased[A]("schema")
 
   // Schema components
   given [A]: Schema[TypeName[A]] = {
@@ -139,14 +160,53 @@ private[schema] trait SchemaInstances0 extends SchemaInstances1 { this: Schema.t
   given [A]: Schema[Primitives[A]] = derived[Primitives[A]]
   given [A]: Schema[Lazy[A]] = {
     given TypeName[Lazy[A]] = typeName"dbg.schema.Lazy[...]".of[Lazy[A]]
-    given Schema[A]         = erased("schema")
+    given Schema[A]         = unknownType
     product(Field[Lazy[A], A](Schema[A], "lazy", _.value))(args => Lazy(args(0).asInstanceOf[A]))
   }
   @targetName("given_Schema_Product_Of")
-  given [A]: Schema[Field.Of[A]] = ??? // TODO
+  given [A]: Schema[Field.Of[A]] = {
+    type Underlying
+    given TypeName[Underlying]           = typeName"dbg.schema.Field.Of[...].Underlying".of[Underlying]
+    given Schema[Underlying]             = unknownType
+    given TypeName[Field[A, Underlying]] = typeName"dbg.schema.Field.Of[...]".of[Field[A, Underlying]]
+    derived[Field[A, Underlying]].narrow[Field.Of[A]]
+  }
   @targetName("given_Schema_Subtype_Of")
-  given [A]: Schema[Subtype.Of[A]]        = ??? // TODO
-  given [A, B]: Schema[MappingType[A, B]] = ??? // TODO
+  given [A]: Schema[Subtype.Of[A]] = {
+    type Underlying
+    given TypeName[Underlying]             = typeName"dbg.schema.Subtype.Of[...].Underlying".of[Underlying]
+    given Schema[Underlying]               = unknownType
+    given TypeName[Subtype[A, Underlying]] = typeName"dbg.schema.Subtype.Of[...]".of[Subtype[A, Underlying]]
+    derived[Subtype[A, Underlying]].narrow[Subtype.Of[A]]
+  }
+  given [A, B]: Schema[MappingType[A, B]] = {
+    given [A, B]: Schema[MappingType.NewType[A, B]] = {
+      given TypeName[MappingType.NewType[A, B]] =
+        typeName"dbg.schema.MappingType.NewType[..., ...]".of[MappingType.NewType[A, B]]
+      given Schema[B] = unknownType
+      derived[MappingType.NewType[A, B]]
+    }
+    given [A, B]: Schema[MappingType.SeqLike[A, B]] = {
+      given TypeName[MappingType.SeqLike[A, B]] =
+        typeName"dbg.schema.MappingType.SeqLike[..., ...]".of[MappingType.SeqLike[A, B]]
+      given Schema[B] = unknownType
+      derived[MappingType.SeqLike[A, B]]
+    }
+    given [A, K, V]: Schema[MappingType.MapLike[A, K, V]] = {
+      given TypeName[MappingType.MapLike[A, K, V]] =
+        typeName"dbg.schema.MappingType.MapLike[..., ...]".of[MappingType.MapLike[A, K, V]]
+      given Schema[K] = unknownType
+      given Schema[V] = unknownType
+      derived[MappingType.MapLike[A, K, V]]
+    }
+    given [A, B]: Schema[MappingType.Erased[A, B]] = {
+      given TypeName[MappingType.Erased[A, B]] =
+        typeName"dbg.schema.MappingType.Erased[..., ...]".of[MappingType.Erased[A, B]]
+      derived[MappingType.Erased[A, B]]
+    }
+    given TypeName[MappingType[A, B]] = typeName"dbg.schema.MappingType[..., ...]".of[MappingType[A, B]]
+    derived[MappingType[A, B]]
+  }
 
   // Schema elements
   given [A]: Schema[Primitive[A]] = {
@@ -155,7 +215,7 @@ private[schema] trait SchemaInstances0 extends SchemaInstances1 { this: Schema.t
   }
   given [A]: Schema[Singleton[A]] = {
     given TypeName[Singleton[A]] = typeName"dbg.schema.Singleton[...]".of[Singleton[A]]
-    given Schema[A]              = erased("schema")
+    given Schema[A]              = unknownType
     derived[Singleton[A]]
   }
   given [A]: Schema[Product[A]] = {
@@ -176,40 +236,45 @@ private[schema] trait SchemaInstances0 extends SchemaInstances1 { this: Schema.t
   }
 }
 
-private[schema] trait SchemaInstances1 { this: Schema.type =>
+private[schema] trait SchemaInstancesDerived { this: Schema.type =>
 
-  inline given derived[A: Mirror.Of]: Schema[A] = inline summon[Mirror.Of[A]] match {
-    case v: Mirror.Singleton =>
-      singleton[A](v.asInstanceOf[A])
-    case v: Mirror.SingletonProxy =>
-      singleton[A](v.value.asInstanceOf[A])
-    case p: Mirror.ProductOf[A] =>
-      // TODO: add @secure annotation
-      val name = summonInline[ValueOf[p.MirroredLabel]].value
-      val labels =
-        summonAll[Tuple.Map[p.MirroredElemLabels, ValueOf]].toIArray.asInstanceOf[IArray[ValueOf[String]]].map(_.value)
-      val schemas = summonAll[Tuple.Map[p.MirroredElemTypes, Schema]].toIArray.asInstanceOf[IArray[Schema[?]]]
-      val fields = labels.zip(schemas).zipWithIndex.map { case ((label, schema), index) =>
-        type Arbitrary
-        Field[A, Arbitrary](
-          schema.asInstanceOf[Schema[Arbitrary]],
-          label,
-          (a: A) => a.asInstanceOf[scala.Product].productElement(index).asInstanceOf[Arbitrary]
-        ): Field.Of[A]
+  inline given derived[A: Mirror.Of]: Schema[A] =
+    inline if dbg.annotations.secure.isAnnotated[A] then secured
+    else
+      inline summon[Mirror.Of[A]] match {
+        case v: Mirror.Singleton =>
+          singleton[A](v.asInstanceOf[A])
+        case v: Mirror.SingletonProxy =>
+          singleton[A](v.value.asInstanceOf[A])
+        case p: Mirror.ProductOf[A] =>
+          val name = summonInline[ValueOf[p.MirroredLabel]].value
+          val labels =
+            summonAll[Tuple.Map[p.MirroredElemLabels, ValueOf]].toIArray
+              .asInstanceOf[IArray[ValueOf[String]]]
+              .map(_.value)
+          val schemas   = summonAll[Tuple.Map[p.MirroredElemTypes, Schema]].toIArray.asInstanceOf[IArray[Schema[?]]]
+          val isSecured = dbg.annotations.secure.annotatedPositions[A].toArray
+          val fields = labels.zip(schemas).zipWithIndex.map { case ((label, schema), index) =>
+            type Underlying
+            Field[A, Underlying](
+              if isSecured(index) then dbg.schema.Schema.secured else schema.asInstanceOf[Schema[Underlying]],
+              label,
+              (a: A) => a.asInstanceOf[scala.Product].productElement(index).asInstanceOf[Underlying]
+            ): Field.Of[A]
+          }
+          product(fields)(ArrayAsProduct(name, labels, _).pipe(p.fromProduct))
+        case s: Mirror.SumOf[A] =>
+          val name      = summonInline[ValueOf[s.MirroredLabel]].value
+          val schemas   = summonAll[Tuple.Map[s.MirroredElemTypes, Schema]].toIArray.asInstanceOf[IArray[Schema[?]]]
+          val isSecured = dbg.annotations.secure.annotatedPositions[A].toArray
+          val subtypes = schemas.zipWithIndex.map { case (schema, index) =>
+            type Underlying
+            Subtype[A, Underlying](
+              if isSecured(index) then secured else schema.asInstanceOf[Schema[Underlying]]
+            ): Subtype.Of[A]
+          }
+          sumType(subtypes)(s.ordinal(_))
       }
-      product(fields)(ArrayAsProduct(name, labels, _).pipe(p.fromProduct))
-    case s: Mirror.SumOf[A] =>
-      // TODO: add @secure annotation
-      val name = summonInline[ValueOf[s.MirroredLabel]].value
-      val subtypes = summonAll[Tuple.Map[s.MirroredElemTypes, Schema]].toIArray
-        .asInstanceOf[IArray[Schema[?]]]
-        .zipWithIndex
-        .map { case (schema, index) =>
-          type Arbitrary
-          Subtype[A, Arbitrary](schema.asInstanceOf[Schema[Arbitrary]]): Subtype.Of[A]
-        }
-      sumType(subtypes)(s.ordinal(_))
-  }
 
   final class ArrayAsProduct(name: String, labels: IArray[String], arr: IArray[Any]) extends scala.Product {
     self =>

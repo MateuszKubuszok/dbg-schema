@@ -10,7 +10,7 @@ trait TraverseSchema {
     case Schema.Primitive(name, primitive)         => onPrimitive(name, primitive)
     case Schema.Singleton(name, value)             => onSingleton(name, value)
     case Schema.Product(name, fields, construct)   => onProduct(name, fields, construct)
-    case Schema.SumType(name, elements, construct) => onSumType(name, elements, construct)
+    case Schema.SumType(name, elements, toOrdinal) => onSumType(name, elements, toOrdinal)
     case Schema.Invariant(name, to, from, hint)    => onInvariant(name, to, from, hint)
   }
 

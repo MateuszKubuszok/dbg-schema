@@ -15,3 +15,11 @@ object TypeName {
     val name = TypeRepr.of[A].show.takeWhile(_ != '[')
     '{ TypeName(${ summon[ToExpr[String]].apply(name) }) }
 }
+
+opaque type UntypedTypeName = String
+extension (utn: UntypedTypeName)
+ def of[A]: TypeName[A] = TypeName(utn)
+
+extension (sc: StringContext)
+  def typeName(args: TypeName[?]*): UntypedTypeName = 
+    sc.s(args.map(_.fullName))

@@ -9,4 +9,4 @@ Generate schema for your data types and traverse them:
    provide use cases for it later on
 
 Example:
- * [pretty print example](visitors/ShowSchema.test.scala)
+ * [pretty print example](dbg/visitors/ShowSchema.test.scala)

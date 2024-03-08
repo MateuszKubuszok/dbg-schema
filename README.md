@@ -7,3 +7,6 @@ Generate schema for your data types and traverse them:
  * it can be used to traverse the whole data tree
  * this way you might need to derive only 1 type class in compile time and
    provide use cases for it later on
+
+Example:
+ * [pretty print example](visitors/ShowSchema.test.scala)

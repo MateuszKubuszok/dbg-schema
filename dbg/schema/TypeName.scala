@@ -17,9 +17,8 @@ object TypeName {
 }
 
 opaque type UntypedTypeName = String
-extension (utn: UntypedTypeName)
- def of[A]: TypeName[A] = TypeName(utn)
+extension (utn: UntypedTypeName) def of[A]: TypeName[A] = TypeName(utn)
 
 extension (sc: StringContext)
-  def typeName(args: TypeName[?]*): UntypedTypeName = 
+  def typeName(args: TypeName[?]*): UntypedTypeName =
     sc.s(args.map(_.fullName))

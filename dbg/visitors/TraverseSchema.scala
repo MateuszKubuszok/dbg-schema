@@ -8,8 +8,8 @@ trait TraverseSchema {
   def onSchema[A](schema: Schema[A]): Out[A] = schema match {
     case Schema.Primitive(name, primitive)         => onPrimitive(name, primitive)
     case Schema.Singleton(name, value)             => onSingleton(name, value)
-    case Schema.Product(name, fields, construct)   => onProduct(name, fields, construct)
-    case Schema.SumType(name, elements, toOrdinal) => onSumType(name, elements, toOrdinal)
+    case Schema.Product(name, fields, construct)   => onProduct(name, fields.map(_.value), construct)
+    case Schema.SumType(name, elements, toOrdinal) => onSumType(name, elements.map(_.value), toOrdinal)
     case Schema.Invariant(name, to, from, hint)    => onInvariant(name, to, from, hint)
   }
 

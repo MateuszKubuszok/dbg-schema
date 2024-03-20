@@ -62,7 +62,7 @@ object ShowSchema extends TraverseSchema {
   def onChar: Out[Char]       = a => ctx.append("'" + a.toString + "'")
   def onString: Out[String]   = a => ctx.append("\"" + a.toString + "\"")
 
-  def onSingleton[A](name: TypeName[A], value: A): Out[A] = _ => ctx.indent.append(name.fullName + ".type")
+  def onSingleton[A](name: TypeName[A], value: A): Out[A] = _ => ctx.append(name.fullName + ".type")
 
   def onProduct[A](name: TypeName[A], fields: IArray[Field.Of[A]], construct: IArray[Any] => A): Out[A] = a => {
     ctx.append(name.fullName).append("(")
@@ -77,7 +77,7 @@ object ShowSchema extends TraverseSchema {
       }
       ctx.ln
     }
-    ctx.append(")")
+    ctx.indent.append(")")
   }
 
   def onSumType[A](name: TypeName[A], elements: IArray[Subtype.Of[A]], toOrdinal: A => Int): Out[A] = a => {

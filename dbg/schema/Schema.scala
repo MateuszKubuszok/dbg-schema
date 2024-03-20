@@ -11,8 +11,8 @@ import scala.collection.View.Single
 enum Schema[A] {
   case Primitive(name: TypeName[A], primitive: Primitives[A])
   case Singleton(name: TypeName[A], value: A)
-  case Product(name: TypeName[A], fields: IArray[Field.Of[A]], construct: IArray[Any] => A) // TODO: use Lazy
-  case SumType(name: TypeName[A], elements: IArray[Subtype.Of[A]], toOrdinal: A => Int)     // TODO: use Lazy
+  case Product(name: TypeName[A], fields: IArray[Lazy[Field.Of[A]]], construct: IArray[Any] => A)
+  case SumType(name: TypeName[A], elements: IArray[Lazy[Subtype.Of[A]]], toOrdinal: A => Int)
   case Invariant[A, B](name: TypeName[A], to: A => B, from: B => A, hint: MappingType[A, B]) extends Schema[A]
 
   val name: TypeName[A]
@@ -25,15 +25,15 @@ object Schema extends SchemaInstancesBuildIn {
   def singleton[A: TypeName](value: A): Schema[A] =
     Singleton(TypeName[A], value)
 
-  def product[A: TypeName](fields: IArray[Field.Of[A]])(construct: IArray[Any] => A): Schema[A] =
+  def product[A: TypeName](fields: IArray[Lazy[Field.Of[A]]])(construct: IArray[Any] => A): Schema[A] =
     Product(TypeName[A], fields, construct)
   def product[A: TypeName](fields: Field.Of[A]*)(construct: IArray[Any] => A): Schema[A] =
-    product(IArray.from(fields))(construct)
+    product(IArray.from(fields.map(Lazy(_))))(construct)
 
-  def sumType[A: TypeName](elements: IArray[Subtype.Of[A]])(toOrdinal: A => Int): Schema[A] =
+  def sumType[A: TypeName](elements: IArray[Lazy[Subtype.Of[A]]])(toOrdinal: A => Int): Schema[A] =
     SumType(TypeName[A], elements, toOrdinal)
   def sumType[A: TypeName](elements: Subtype.Of[A]*)(toOrdinal: Any => Int): Schema[A] =
-    sumType(IArray.from(elements))(toOrdinal)
+    sumType(IArray.from(elements.map(Lazy(_))))(toOrdinal)
 
   def isomorphism[A: TypeName, B: Schema](to: A => B)(from: B => A): Schema[A] =
     Invariant[A, B](TypeName[A], to, from, MappingType.NewType(Schema[B]))
@@ -251,26 +251,30 @@ private[schema] trait SchemaInstancesDerived { this: Schema.type =>
           val labels =
             summonAll[Tuple.Map[p.MirroredElemLabels, ValueOf]].toIArray
               .map(_.asInstanceOf[ValueOf[String]].value)
-          val schemas   = summonAll[Tuple.Map[p.MirroredElemTypes, Schema]].toIArray.map(_.asInstanceOf[Schema[?]])
+          val schemas   = summonAll[Tuple.Map[p.MirroredElemTypes, [A0] =>> Lazy[Schema[A0]]]].toIArray.map(_.asInstanceOf[Lazy[Schema[?]]])
           val isSecured = dbg.annotations.secure.annotatedPositions[A].toArray
-          val fields = labels.zip(schemas).zipWithIndex.map { case ((label, schema), index) =>
+          val fields = labels.zip(schemas).zipWithIndex.map { case ((label, lazySchema), index) =>
             type Underlying
-            Field[A, Underlying](
-              if isSecured(index) then dbg.schema.Schema.secured else schema.asInstanceOf[Schema[Underlying]],
-              label,
-              (a: A) => a.asInstanceOf[scala.Product].productElement(index).asInstanceOf[Underlying]
-            ): Field.Of[A]
+            Lazy[Field.Of[A]] {
+              Field[A, Underlying](
+                if isSecured(index) then secured else lazySchema.value.asInstanceOf[Schema[Underlying]],
+                label,
+                (a: A) => a.asInstanceOf[scala.Product].productElement(index).asInstanceOf[Underlying]
+              )
+            }
           }
           product(fields)(ArrayAsProduct(name, labels, _).pipe(p.fromProduct))
         case s: Mirror.SumOf[A] =>
           val name      = summonInline[ValueOf[s.MirroredLabel]].value
-          val schemas   = summonAll[Tuple.Map[s.MirroredElemTypes, Schema]].toIArray.map(_.asInstanceOf[Schema[?]])
+          val schemas   = summonAll[Tuple.Map[s.MirroredElemTypes, [A0] =>> Lazy[Schema[A0]]]].toIArray.map(_.asInstanceOf[Lazy[Schema[?]]])
           val isSecured = dbg.annotations.secure.annotatedPositions[A].toArray
-          val subtypes = schemas.zipWithIndex.map { case (schema, index) =>
+          val subtypes = schemas.zipWithIndex.map { case (lazySchema, index) =>
             type Underlying
-            Subtype[A, Underlying](
-              if isSecured(index) then secured else schema.asInstanceOf[Schema[Underlying]]
-            ): Subtype.Of[A]
+            Lazy[Subtype.Of[A]] {
+              Subtype[A, Underlying](
+                if isSecured(index) then secured else lazySchema.value.asInstanceOf[Schema[Underlying]]
+              )
+            }
           }
           sumType(subtypes)(s.ordinal(_))
       }

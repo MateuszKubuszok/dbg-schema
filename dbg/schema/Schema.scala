@@ -251,7 +251,8 @@ private[schema] trait SchemaInstancesDerived { this: Schema.type =>
           val labels =
             summonAll[Tuple.Map[p.MirroredElemLabels, ValueOf]].toIArray
               .map(_.asInstanceOf[ValueOf[String]].value)
-          val schemas   = summonAll[Tuple.Map[p.MirroredElemTypes, [A0] =>> Lazy[Schema[A0]]]].toIArray.map(_.asInstanceOf[Lazy[Schema[?]]])
+          val schemas = summonAll[Tuple.Map[p.MirroredElemTypes, [A0] =>> Lazy[Schema[A0]]]].toIArray
+            .map(_.asInstanceOf[Lazy[Schema[?]]])
           val isSecured = dbg.annotations.secure.annotatedPositions[A].toArray
           val fields = labels.zip(schemas).zipWithIndex.map { case ((label, lazySchema), index) =>
             type Underlying
@@ -265,8 +266,9 @@ private[schema] trait SchemaInstancesDerived { this: Schema.type =>
           }
           product(fields)(ArrayAsProduct(name, labels, _).pipe(p.fromProduct))
         case s: Mirror.SumOf[A] =>
-          val name      = summonInline[ValueOf[s.MirroredLabel]].value
-          val schemas   = summonAll[Tuple.Map[s.MirroredElemTypes, [A0] =>> Lazy[Schema[A0]]]].toIArray.map(_.asInstanceOf[Lazy[Schema[?]]])
+          val name = summonInline[ValueOf[s.MirroredLabel]].value
+          val schemas = summonAll[Tuple.Map[s.MirroredElemTypes, [A0] =>> Lazy[Schema[A0]]]].toIArray
+            .map(_.asInstanceOf[Lazy[Schema[?]]])
           val isSecured = dbg.annotations.secure.annotatedPositions[A].toArray
           val subtypes = schemas.zipWithIndex.map { case (lazySchema, index) =>
             type Underlying

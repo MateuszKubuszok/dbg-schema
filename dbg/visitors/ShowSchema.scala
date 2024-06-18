@@ -108,7 +108,7 @@ object ShowSchema extends TraverseSchema {
         ctx.ln.nest.indent
         onSchema(item)(using ctx.nest)(c)
       }
-      ctx.ln
+      ctx.ln.indent
     }
     ctx.append(")")
   }
@@ -131,7 +131,7 @@ object ShowSchema extends TraverseSchema {
         ctx.append(" -> ")
         onSchema(value)(using ctx.nest)(v)
       }
-      ctx.ln
+      ctx.ln.indent
     }
     ctx.append(")")
   }
